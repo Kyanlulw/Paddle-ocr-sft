@@ -530,7 +530,14 @@ def train():
         print("🚀 Flash Attention 2 enabled")
         model_kwargs["attn_implementation"] = "flash_attention_2"
 
-    _patch_rope_compat()
+    _patch_rope_compat()    
+    from huggingface_hub import snapshot_download
+    print(f"Downloading model files from {model_args.model_path}...")
+    snapshot_download(
+        repo_id=model_args.model_path,
+        trust_remote_code=True,
+        ignore_patterns=["*.msgpack", "*.h5", "flax_model*"],
+    )
     _patch_causal_mask_compat()
     model = AutoModelForCausalLM.from_pretrained(model_args.model_path, **model_kwargs)
     print(f"✓ Model loaded in {next(model.parameters()).dtype}")
