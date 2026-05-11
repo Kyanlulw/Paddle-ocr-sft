@@ -439,6 +439,32 @@ def _patch_rope_compat() -> None:
     ROPE_INIT_FUNCTIONS["default"] = _compute_default_rope_parameters_compat
     print("Patched Transformers RoPE registry with a 'default' handler.")
 
+def _patch_causal_mask_compat() -> None:
+    """Strip inputs_embeds from create_causal_mask calls in cached model code."""
+    import importlib, types
+
+    model_module_path = (
+        "transformers_modules.PaddlePaddle.PaddleOCR_hyphen_VL"
+        ".fdd645c8b72f22ed25997db0d1dc80d09e51579b.modeling_paddleocr_vl"
+    )
+    try:
+        mod = importlib.import_module(model_module_path)
+    except ModuleNotFoundError:
+        print("Could not find PaddleOCR-VL module to patch; skipping.")
+        return
+
+    original_fn = mod.create_causal_mask
+    import inspect
+    if "inputs_embeds" in inspect.signature(original_fn).parameters:
+        print("create_causal_mask already accepts inputs_embeds; no patch needed.")
+        return
+
+    def _patched_create_causal_mask(*args, inputs_embeds=None, **kwargs):
+        return original_fn(*args, **kwargs)
+
+    mod.create_causal_mask = _patched_create_causal_mask
+    print("Patched create_causal_mask() for inputs_embeds compatibility.")
+
 
 def train():
     """Main training function."""
@@ -481,6 +507,7 @@ def train():
         model_kwargs["attn_implementation"] = "flash_attention_2"
 
     _patch_rope_compat()
+    _patch_causal_mask_compat()
     model = AutoModelForCausalLM.from_pretrained(model_args.model_path, **model_kwargs)
     print(f"✓ Model loaded in {next(model.parameters()).dtype}")
 
