@@ -13,7 +13,6 @@ python sft_paddleocr_vl.py \
     --train_annotation_path /kaggle/input/datasets/trnlqung/qwen-scored-9300samples/unsorted/mixed30k.json \
     --dataset1_image_root /kaggle/input/datasets/trnlqung/vitext-vqa/ViTextVQA_images/st_images \
     --dataset2_image_root /kaggle/input/datasets/trnlqung/openvivqa/images/images \
-    --dataset2_metadata_path /path/to/openvivqa_train_v2.json \
     --max_length 1536 \
     --pad_to_multiple_of 8 \
     --output_dir ./sft_output_mixed30k \
