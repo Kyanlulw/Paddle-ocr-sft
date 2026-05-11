@@ -443,51 +443,51 @@ def _patch_causal_mask_compat() -> None:
     """Remove inputs_embeds only from the create_causal_mask() call."""
     import pathlib
 
-    model_file = pathlib.Path(
-        "/root/.cache/huggingface/modules/transformers_modules/"
-        "PaddlePaddle/PaddleOCR_hyphen_VL/"
-        "fdd645c8b72f22ed25997db0d1dc80d09e51579b/"
-        "modeling_paddleocr_vl.py"
-    )
+    # Search both the hub snapshot path AND the modules path
+    search_roots = [
+        pathlib.Path("/root/.cache/huggingface/hub"),
+        pathlib.Path("/root/.cache/huggingface/modules/transformers_modules"),
+    ]
 
-    if not model_file.exists():
-        # Last resort: search recursively
-        base = pathlib.Path("/root/.cache/huggingface/modules/transformers_modules")
-        matches = list(base.rglob("modeling_paddleocr_vl.py"))
-        if not matches:
-            print("WARNING: Could not find modeling_paddleocr_vl.py — skipping patch.")
-            return
-        model_file = matches[0]
+    model_files = []
+    for root in search_roots:
+        if root.exists():
+            model_files.extend(root.rglob("modeling_paddleocr_vl.py"))
 
-    print(f"Patching: {model_file}")
-    source = model_file.read_text(encoding="utf-8")
-
-    if "inputs_embeds=inputs_embeds" not in source:
-        print("Patch not needed or already applied.")
+    if not model_files:
+        print("WARNING: Could not find modeling_paddleocr_vl.py — skipping patch.")
         return
 
-    lines = source.splitlines(keepends=True)
-    patched_lines = []
-    inside_causal_mask_call = False
+    for model_file in model_files:
+        print(f"Checking: {model_file}")
+        source = model_file.read_text(encoding="utf-8")
 
-    for line in lines:
-        if "create_causal_mask(" in line:
-            inside_causal_mask_call = True
-
-        if inside_causal_mask_call and "inputs_embeds=inputs_embeds" in line:
-            print(f"  Removing line: {line.rstrip()}")
-            if ")" in line:
-                inside_causal_mask_call = False
+        if "inputs_embeds=inputs_embeds" not in source:
+            print(f"  Already patched or not needed, skipping.")
             continue
 
-        if inside_causal_mask_call and ")" in line:
-            inside_causal_mask_call = False
+        lines = source.splitlines(keepends=True)
+        patched_lines = []
+        inside_causal_mask_call = False
 
-        patched_lines.append(line)
+        for line in lines:
+            if "create_causal_mask(" in line:
+                inside_causal_mask_call = True
 
-    patched = "".join(patched_lines)
-    model_file.write_text(patched, encoding="utf-8")
-    print(f"✓ Patched {model_file}")
+            if inside_causal_mask_call and "inputs_embeds=inputs_embeds" in line:
+                print(f"  Removing line: {line.rstrip()}")
+                if ")" in line:
+                    inside_causal_mask_call = False
+                continue
+
+            if inside_causal_mask_call and ")" in line:
+                inside_causal_mask_call = False
+
+            patched_lines.append(line)
+
+        patched = "".join(patched_lines)
+        model_file.write_text(patched, encoding="utf-8")
+        print(f"  ✓ Patched {model_file}")
 
 
 def train():
@@ -531,12 +531,6 @@ def train():
         model_kwargs["attn_implementation"] = "flash_attention_2"
 
     _patch_rope_compat()    
-    from huggingface_hub import snapshot_download
-    print(f"Downloading model files from {model_args.model_path}...")
-    snapshot_download(
-        repo_id=model_args.model_path,
-        ignore_patterns=["*.msgpack", "*.h5", "flax_model*"],
-    )
     _patch_causal_mask_compat()
     model = AutoModelForCausalLM.from_pretrained(model_args.model_path, **model_kwargs)
     print(f"✓ Model loaded in {next(model.parameters()).dtype}")
