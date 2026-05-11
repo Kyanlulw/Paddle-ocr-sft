@@ -9,11 +9,27 @@ Usage:
     bash train.sh
 """
 
+import gc
 from dataclasses import dataclass, field
 import os
 from typing import Optional
 
 import torch
+
+try:
+    from accelerate.utils import memory as accelerate_memory
+
+    if not hasattr(accelerate_memory, "clear_device_cache"):
+        def _clear_device_cache_compat(garbage_collection: bool = False) -> None:
+            if garbage_collection:
+                gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+        accelerate_memory.clear_device_cache = _clear_device_cache_compat
+except ImportError:
+    pass
+
 from transformers import (
     AutoModelForCausalLM,
     AutoProcessor,
