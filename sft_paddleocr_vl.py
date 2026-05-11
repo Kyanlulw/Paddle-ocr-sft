@@ -443,30 +443,27 @@ def _patch_causal_mask_compat() -> None:
     """Remove inputs_embeds only from the create_causal_mask() call."""
     import pathlib
 
-    candidates = [
-        pathlib.Path(
-            "/root/.cache/huggingface/modules/transformers_modules/"
-            "PaddlePaddle/PaddleOCR-VL/"
-            "fdd645c8b72f22ed25997db0d1dc80d09e51579b/"
-            "modeling_paddleocr_vl.py"
-        ),
-        pathlib.Path(
-            "/root/.cache/huggingface/modules/transformers_modules/"
-            "PaddlePaddle/PaddleOCR_hyphen_VL/"
-            "fdd645c8b72f22ed25997db0d1dc80d09e51579b/"
-            "modeling_paddleocr_vl.py"
-        ),
-    ]
+    model_file = pathlib.Path(
+        "/root/.cache/huggingface/modules/transformers_modules/"
+        "PaddlePaddle/PaddleOCR_hyphen_VL/"
+        "fdd645c8b72f22ed25997db0d1dc80d09e51579b/"
+        "modeling_paddleocr_vl.py"
+    )
 
-    model_file = next((p for p in candidates if p.exists()), None)
-    if model_file is None:
-        print("WARNING: Could not find modeling_paddleocr_vl.py — skipping patch.")
-        return
+    if not model_file.exists():
+        # Last resort: search recursively
+        base = pathlib.Path("/root/.cache/huggingface/modules/transformers_modules")
+        matches = list(base.rglob("modeling_paddleocr_vl.py"))
+        if not matches:
+            print("WARNING: Could not find modeling_paddleocr_vl.py — skipping patch.")
+            return
+        model_file = matches[0]
 
+    print(f"Patching: {model_file}")
     source = model_file.read_text(encoding="utf-8")
 
     if "inputs_embeds=inputs_embeds" not in source:
-        print("create_causal_mask patch not needed or already applied.")
+        print("Patch not needed or already applied.")
         return
 
     lines = source.splitlines(keepends=True)
@@ -474,19 +471,15 @@ def _patch_causal_mask_compat() -> None:
     inside_causal_mask_call = False
 
     for line in lines:
-        # Detect start of the create_causal_mask( call
         if "create_causal_mask(" in line:
             inside_causal_mask_call = True
 
-        # While inside that call, drop the inputs_embeds line
         if inside_causal_mask_call and "inputs_embeds=inputs_embeds" in line:
             print(f"  Removing line: {line.rstrip()}")
-            # Detect end of call block (closing paren)
             if ")" in line:
                 inside_causal_mask_call = False
-            continue  # skip this line
+            continue
 
-        # Detect end of call block
         if inside_causal_mask_call and ")" in line:
             inside_causal_mask_call = False
 
