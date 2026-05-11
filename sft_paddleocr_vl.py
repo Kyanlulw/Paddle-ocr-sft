@@ -1,8 +1,8 @@
 """
 Supervised Fine-Tuning (SFT) script for PaddleOCR-VL on Manga109s dataset.
 
-This script fine-tunes PaddleOCR-VL for Japanese manga OCR using BF16 precision.
-Optimized for RTX 3060 (12GB VRAM) but works on any GPU supporting BF16.
+This script fine-tunes PaddleOCR-VL for Japanese manga OCR using FP16 precision.
+Optimized for RTX 3060 (12GB VRAM) but works on any GPU supporting FP16.
 
 Usage:
     python sft_paddleocr_vl.py --help
@@ -10,7 +10,9 @@ Usage:
 """
 
 import gc
+from contextlib import nullcontext
 from dataclasses import dataclass, field
+import inspect
 import os
 from typing import Optional
 
@@ -18,6 +20,7 @@ import torch
 import transformers as transformers_module
 
 try:
+    from accelerate import Accelerator
     from accelerate.utils import memory as accelerate_memory
 
     if not hasattr(accelerate_memory, "clear_device_cache"):
@@ -28,6 +31,25 @@ try:
                 torch.cuda.empty_cache()
 
         accelerate_memory.clear_device_cache = _clear_device_cache_compat
+
+    _unwrap_model_signature = inspect.signature(Accelerator.unwrap_model)
+    if "keep_torch_compile" not in _unwrap_model_signature.parameters:
+        _original_unwrap_model = Accelerator.unwrap_model
+
+        def _unwrap_model_compat(
+            self,
+            model,
+            keep_fp32_wrapper: bool = True,
+            keep_torch_compile: bool = True,
+        ):
+            del keep_torch_compile
+            return _original_unwrap_model(
+                self,
+                model,
+                keep_fp32_wrapper=keep_fp32_wrapper,
+            )
+
+        Accelerator.unwrap_model = _unwrap_model_compat
 except ImportError:
     pass
 
@@ -53,21 +75,25 @@ from custom_collator import CustomDataCollatorForVisionLanguageModeling
 from ocr_dataset import MangaDataset, Mixed30kDataset
 
 
-class BF16Trainer(Trainer):
+class FP16Trainer(Trainer):
     """
-    Custom Trainer using BF16 autocast without GradScaler.
-    
-    RTX 3060 and newer GPUs support BF16 which has better numerical stability 
-    than FP16 and doesn't require loss scaling. This trainer wraps the training
-    and prediction steps with torch.amp.autocast for BF16 computation.
+    Custom Trainer using FP16 autocast.
+
+    This wraps the training and prediction steps with torch.amp.autocast so the
+    forward pass runs in float16 on CUDA devices.
     """
-    
+
     def training_step(self, model, inputs, num_items_in_batch=None):
-        """Override training_step to use BF16 autocast."""
+        """Override training_step to use FP16 autocast."""
         model.train()
         inputs = self._prepare_inputs(inputs)
 
-        with torch.amp.autocast('cuda', dtype=torch.bfloat16):
+        autocast_context = (
+            torch.amp.autocast("cuda", dtype=torch.float16)
+            if DEVICE == "cuda"
+            else nullcontext()
+        )
+        with autocast_context:
             loss = self.compute_loss(model, inputs)
 
         if self.args.gradient_accumulation_steps > 1:
@@ -75,14 +101,19 @@ class BF16Trainer(Trainer):
 
         self.accelerator.backward(loss)
         return loss.detach()
-    
+
     def prediction_step(self, model, inputs, prediction_loss_only, ignore_keys=None):
-        """Override prediction_step to use BF16 autocast during evaluation."""
+        """Override prediction_step to use FP16 autocast during evaluation."""
         model.eval()
         inputs = self._prepare_inputs(inputs)
-        
+
         with torch.no_grad():
-            with torch.amp.autocast('cuda', dtype=torch.bfloat16):
+            autocast_context = (
+                torch.amp.autocast("cuda", dtype=torch.float16)
+                if DEVICE == "cuda"
+                else nullcontext()
+            )
+            with autocast_context:
                 loss = self.compute_loss(model, inputs)
                 return (loss, None, None)
 
@@ -421,18 +452,21 @@ def train():
     )
 
     # Required for VL models
+    training_args.bf16 = False
+    training_args.fp16 = DEVICE == "cuda"
     training_args.remove_unused_columns = False
     training_args.prediction_loss_only = True  # Avoid OOM during evaluation
 
     world_size = _get_world_size()
     print(f"Training world size: {world_size} process(es)")
 
-    # Load model in BF16
+    # Load model in FP16
     print(f"Loading model from {model_args.model_path}...")
-    
+
+    model_dtype = torch.float16 if DEVICE == "cuda" else torch.float32
     model_kwargs = {
         "trust_remote_code": True,
-        "torch_dtype": torch.bfloat16,
+        "torch_dtype": model_dtype,
     }
 
     if world_size == 1 and DEVICE == "cuda":
@@ -515,8 +549,8 @@ def train():
     wandb_module = _setup_wandb(training_args, tracking_args)
     
     # Initialize trainer
-    print("Initializing BF16Trainer...")
-    trainer = BF16Trainer(
+    print("Initializing FP16Trainer...")
+    trainer = FP16Trainer(
         model=model,
         args=training_args,
         train_dataset=train_dataset,

@@ -31,5 +31,6 @@ python sft_paddleocr_vl.py \
     --save_total_limit 3 \
     --dataloader_num_workers 2 \
     --gradient_checkpointing \
+    --fp16 \
     --optim adamw_torch \
     --report_to none

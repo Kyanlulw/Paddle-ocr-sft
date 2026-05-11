@@ -30,6 +30,7 @@ COMMON_ARGS=(
     --dataloader_num_workers 2
     --gradient_checkpointing
     --ddp_find_unused_parameters false
+    --fp16
     --optim adamw_torch
     --report_to "${REPORT_TO}"
 )
@@ -39,7 +40,7 @@ case "${DATASET_BACKEND}" in
         RUN_ARGS=(
             --run_name "PaddleOCR-VL-Manga109s"
             --wandb_project "paddleocr-vl-sft"
-            --wandb_tags "manga109,t4x2,bf16"
+            --wandb_tags "manga109,t4x2,fp16"
             --dataset_backend manga109
             --split train
             --output_dir ./sft_output
@@ -61,7 +62,7 @@ case "${DATASET_BACKEND}" in
         RUN_ARGS=(
             --run_name "PaddleOCR-VL-mixed30k"
             --wandb_project "paddleocr-vl-sft"
-            --wandb_tags "mixed30k,t4x2,bf16"
+            --wandb_tags "mixed30k,t4x2,fp16"
             --dataset_backend mixed30k
             --train_annotation_path "${TRAIN_ANNOTATION_PATH}"
             --dataset1_image_root "${DATASET1_IMAGE_ROOT}"
