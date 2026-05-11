@@ -15,6 +15,7 @@ import os
 from typing import Optional
 
 import torch
+import transformers as transformers_module
 
 try:
     from accelerate.utils import memory as accelerate_memory
@@ -29,6 +30,16 @@ try:
         accelerate_memory.clear_device_cache = _clear_device_cache_compat
 except ImportError:
     pass
+
+if not hasattr(transformers_module, "EncoderDecoderCache"):
+    _dynamic_cache_base = getattr(transformers_module, "DynamicCache", object)
+
+    class EncoderDecoderCache(_dynamic_cache_base):
+        """Compatibility shim for older Transformers releases."""
+
+        pass
+
+    transformers_module.EncoderDecoderCache = EncoderDecoderCache
 
 from transformers import (
     AutoModelForCausalLM,
