@@ -338,6 +338,50 @@ def _get_world_size() -> int:
     return int(os.environ.get("WORLD_SIZE", "1"))
 
 
+def _patch_rope_compat() -> None:
+    """Backfill older Transformers RoPE registries for PaddleOCR-VL."""
+    try:
+        from transformers.modeling_rope_utils import ROPE_INIT_FUNCTIONS
+    except ImportError:
+        return
+
+    if "default" in ROPE_INIT_FUNCTIONS:
+        return
+
+    def _compute_default_rope_parameters_compat(
+        config=None,
+        device=None,
+        seq_len=None,
+        **rope_kwargs,
+    ):
+        del seq_len
+
+        if config is None:
+            base = rope_kwargs["base"]
+            dim = rope_kwargs["dim"]
+        else:
+            base = getattr(config, "rope_theta", 10000.0)
+            partial_rotary_factor = getattr(config, "partial_rotary_factor", 1.0)
+            head_dim = getattr(config, "head_dim", None)
+            if head_dim is None:
+                hidden_size = getattr(config, "hidden_size")
+                num_attention_heads = getattr(config, "num_attention_heads")
+                head_dim = hidden_size // num_attention_heads
+            dim = int(head_dim * partial_rotary_factor)
+
+        inv_freq = 1.0 / (
+            base
+            ** (
+                torch.arange(0, dim, 2, device=device, dtype=torch.float32)
+                / dim
+            )
+        )
+        return inv_freq, 1.0
+
+    ROPE_INIT_FUNCTIONS["default"] = _compute_default_rope_parameters_compat
+    print("Patched Transformers RoPE registry with a 'default' handler.")
+
+
 def train():
     """Main training function."""
 
@@ -375,6 +419,7 @@ def train():
         print("🚀 Flash Attention 2 enabled")
         model_kwargs["attn_implementation"] = "flash_attention_2"
 
+    _patch_rope_compat()
     model = AutoModelForCausalLM.from_pretrained(model_args.model_path, **model_kwargs)
     print(f"✓ Model loaded in {next(model.parameters()).dtype}")
 
