@@ -508,7 +508,7 @@ def train():
 
     # Required for VL models
     training_args.bf16 = False
-    training_args.fp16 = DEVICE == "cuda"
+    training_args.fp16 = False
     training_args.remove_unused_columns = False
     training_args.prediction_loss_only = True  # Avoid OOM during evaluation
 
