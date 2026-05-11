@@ -6,7 +6,7 @@
 # Evaluation is disabled by default; add --eval_annotation_path if you have one.
 # =============================================================================
 
-python sft_paddleocr_vl.py \
+torchrun --nproc_per_node=2 sft_paddleocr_vl.py \
     --run_name "PaddleOCR-VL-mixed30k" \
     --model_path PaddlePaddle/PaddleOCR-VL \
     --dataset_backend mixed30k \
