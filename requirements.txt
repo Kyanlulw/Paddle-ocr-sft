@@ -2,7 +2,7 @@
 # Install PyTorch separately: pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
 
 # Core ML
-transformers>=4.40.0
+transformers==5.0.0
 accelerate>=0.27.0
 wandb>=0.17.0
 
