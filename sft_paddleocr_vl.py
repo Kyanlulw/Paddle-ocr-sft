@@ -440,10 +440,9 @@ def _patch_rope_compat() -> None:
     print("Patched Transformers RoPE registry with a 'default' handler.")
 
 def _patch_causal_mask_compat() -> None:
-    """Remove inputs_embeds only from the create_causal_mask() call."""
+    """Fix inputs_embeds -> input_embeds in create_causal_mask() call."""
     import pathlib
 
-    # Search both the hub snapshot path AND the modules path
     search_roots = [
         pathlib.Path("/root/.cache/huggingface/hub"),
         pathlib.Path("/root/.cache/huggingface/modules/transformers_modules"),
@@ -462,32 +461,38 @@ def _patch_causal_mask_compat() -> None:
         print(f"Checking: {model_file}")
         source = model_file.read_text(encoding="utf-8")
 
-        if "inputs_embeds=inputs_embeds" not in source:
-            print(f"  Already patched or not needed, skipping.")
-            continue
+        patched = source
+        changed = False
 
-        lines = source.splitlines(keepends=True)
-        patched_lines = []
-        inside_causal_mask_call = False
+        # Fix 1: rename kwarg inputs_embeds -> input_embeds inside create_causal_mask call
+        if "inputs_embeds=inputs_embeds" in patched:
+            lines = patched.splitlines(keepends=True)
+            patched_lines = []
+            inside_causal_mask_call = False
 
-        for line in lines:
-            if "create_causal_mask(" in line:
-                inside_causal_mask_call = True
+            for line in lines:
+                if "create_causal_mask(" in line:
+                    inside_causal_mask_call = True
 
-            if inside_causal_mask_call and "inputs_embeds=inputs_embeds" in line:
-                print(f"  Removing line: {line.rstrip()}")
-                if ")" in line:
+                if inside_causal_mask_call and "inputs_embeds=inputs_embeds" in line:
+                    fixed_line = line.replace("inputs_embeds=inputs_embeds", "input_embeds=inputs_embeds")
+                    print(f"  Renaming kwarg in: {line.rstrip()}")
+                    print(f"          becomes: {fixed_line.rstrip()}")
+                    patched_lines.append(fixed_line)
+                    changed = True
+                else:
+                    patched_lines.append(line)
+
+                if inside_causal_mask_call and ")" in line:
                     inside_causal_mask_call = False
-                continue
 
-            if inside_causal_mask_call and ")" in line:
-                inside_causal_mask_call = False
+            patched = "".join(patched_lines)
 
-            patched_lines.append(line)
-
-        patched = "".join(patched_lines)
-        model_file.write_text(patched, encoding="utf-8")
-        print(f"  ✓ Patched {model_file}")
+        if changed:
+            model_file.write_text(patched, encoding="utf-8")
+            print(f"  ✓ Patched {model_file}")
+        else:
+            print(f"  Already patched or not needed, skipping.")
 
 
 def train():
