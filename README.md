@@ -48,6 +48,12 @@ pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
 pip install -r requirements.txt
 ```
 
+Optional for online experiment tracking:
+
+```bash
+wandb login
+```
+
 #### 2. Prepare Dataset
 
 Download and prepare Manga109s dataset:
@@ -83,6 +89,9 @@ bash train.sh
 </p>
 
 Training takes approximately **27 hours** on RTX 3060.
+The launcher now logs to Weights & Biases by default with `--report_to wandb`.
+Use `WANDB_MODE=offline` for local-only tracking or switch `--report_to none`
+if you want to disable it.
 
 #### 4. Train on mixed30k
 

@@ -10,6 +10,7 @@ Usage:
 """
 
 from dataclasses import dataclass, field
+import os
 from typing import Optional
 
 import torch
@@ -45,7 +46,7 @@ class BF16Trainer(Trainer):
         if self.args.gradient_accumulation_steps > 1:
             loss = loss / self.args.gradient_accumulation_steps
 
-        loss.backward()
+        self.accelerator.backward(loss)
         return loss.detach()
     
     def prediction_step(self, model, inputs, prediction_loss_only, ignore_keys=None):
@@ -170,6 +171,44 @@ class DataArguments:
     )
 
 
+@dataclass
+class TrackingArguments:
+    """Arguments for experiment tracking integrations."""
+
+    wandb_project: Optional[str] = field(
+        default=None,
+        metadata={"help": "Weights & Biases project name."},
+    )
+    wandb_entity: Optional[str] = field(
+        default=None,
+        metadata={"help": "Weights & Biases entity or team name."},
+    )
+    wandb_mode: str = field(
+        default="online",
+        metadata={"help": "Weights & Biases mode: online, offline, or disabled."},
+    )
+    wandb_tags: Optional[str] = field(
+        default=None,
+        metadata={"help": "Comma-separated Weights & Biases tags."},
+    )
+    wandb_notes: Optional[str] = field(
+        default=None,
+        metadata={"help": "Optional Weights & Biases run notes."},
+    )
+    wandb_watch: str = field(
+        default="false",
+        metadata={
+            "help": "Weights & Biases model watch mode: false, gradients, or all."
+        },
+    )
+    wandb_log_model: str = field(
+        default="false",
+        metadata={
+            "help": "Weights & Biases model logging mode: false, end, or checkpoint."
+        },
+    )
+
+
 def _get_eval_strategy(training_args: TrainingArguments) -> str:
     """Normalize eval strategy across Transformers versions."""
     strategy = getattr(
@@ -225,16 +264,97 @@ def _build_dataset(
     )
 
 
+def _report_to_includes_wandb(training_args: TrainingArguments) -> bool:
+    """Return True when Weights & Biases logging is enabled."""
+    report_to = getattr(training_args, "report_to", None)
+
+    if report_to is None:
+        return False
+
+    if isinstance(report_to, str):
+        normalized = report_to.strip().lower()
+        if normalized in {"", "none"}:
+            return False
+        return normalized in {"wandb", "all"}
+
+    if isinstance(report_to, (list, tuple, set)):
+        normalized = {str(item).strip().lower() for item in report_to}
+        return "wandb" in normalized or "all" in normalized
+
+    return False
+
+
+def _setup_wandb(
+    training_args: TrainingArguments,
+    tracking_args: TrackingArguments,
+):
+    """Initialize Weights & Biases before Trainer callbacks attach."""
+    if not _report_to_includes_wandb(training_args):
+        return None
+
+    try:
+        import wandb
+    except ImportError as exc:
+        raise ImportError(
+            "wandb tracking was requested via --report_to wandb, but the "
+            "package is not installed. Run `pip install -r requirements.txt` "
+            "or `pip install wandb`."
+        ) from exc
+
+    os.environ["WANDB_WATCH"] = tracking_args.wandb_watch
+    os.environ["WANDB_LOG_MODEL"] = tracking_args.wandb_log_model
+
+    if not training_args.should_log:
+        return None
+
+    init_kwargs = {
+        "project": tracking_args.wandb_project,
+        "entity": tracking_args.wandb_entity,
+        "name": training_args.run_name,
+        "notes": tracking_args.wandb_notes,
+        "mode": tracking_args.wandb_mode,
+        "tags": (
+            [tag.strip() for tag in tracking_args.wandb_tags.split(",") if tag.strip()]
+            if tracking_args.wandb_tags
+            else None
+        ),
+    }
+    init_kwargs = {key: value for key, value in init_kwargs.items() if value is not None}
+
+    if wandb.run is None:
+        wandb.init(**init_kwargs)
+
+    print("Weights & Biases tracking enabled.")
+    if wandb.run is not None:
+        print(f"W&B run: {wandb.run.name} ({wandb.run.id})")
+
+    return wandb
+
+
+def _get_world_size() -> int:
+    """Return the distributed world size from torch or environment."""
+    if torch.distributed.is_available() and torch.distributed.is_initialized():
+        return torch.distributed.get_world_size()
+    return int(os.environ.get("WORLD_SIZE", "1"))
+
+
 def train():
     """Main training function."""
 
     # Parse arguments
-    parser = HfArgumentParser((ModelArguments, DataArguments, TrainingArguments))
-    model_args, data_args, training_args = parser.parse_args_into_dataclasses()
+    parser = HfArgumentParser(
+        (ModelArguments, DataArguments, TrackingArguments, TrainingArguments)
+    )
+    model_args, data_args, tracking_args, training_args = (
+        parser.parse_args_into_dataclasses()
+    )
 
     # Required for VL models
     training_args.remove_unused_columns = False
     training_args.prediction_loss_only = True  # Avoid OOM during evaluation
+
+    world_size = _get_world_size()
+    print(f"Training world size: {world_size} process(es)")
 
     # Load model in BF16
     print(f"Loading model from {model_args.model_path}...")
@@ -242,8 +362,14 @@ def train():
     model_kwargs = {
         "trust_remote_code": True,
         "torch_dtype": torch.bfloat16,
-        "device_map": DEVICE,
     }
+
+    if world_size == 1 and DEVICE == "cuda":
+        print("Single-process CUDA training detected.")
+    elif world_size > 1:
+        print("Distributed training detected; letting Accelerate place the model.")
+    else:
+        print("CUDA is unavailable; training will fall back to CPU placement.")
 
     if model_args.use_flash_attention_2:
         print("🚀 Flash Attention 2 enabled")
@@ -314,6 +440,8 @@ def train():
         if hasattr(model, 'gradient_checkpointing_enable'):
             model.gradient_checkpointing_enable()
     
+    wandb_module = _setup_wandb(training_args, tracking_args)
+    
     # Initialize trainer
     print("Initializing BF16Trainer...")
     trainer = BF16Trainer(
@@ -339,6 +467,8 @@ def train():
     print(f"\nSaving model to {training_args.output_dir}...")
     trainer.save_model(training_args.output_dir)
     processor.save_pretrained(training_args.output_dir)
+    if wandb_module is not None and wandb_module.run is not None:
+        wandb_module.finish()
     print("✓ Training complete!")
 
 

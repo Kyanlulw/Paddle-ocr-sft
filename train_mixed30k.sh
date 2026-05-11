@@ -1,13 +1,25 @@
 #!/bin/bash
 # =============================================================================
-# PaddleOCR-VL Fine-tuning Script for mixed30k on RTX 3060 (12GB VRAM)
+# PaddleOCR-VL Fine-tuning Script for mixed30k on 2x T4 GPUs with Accelerate
+# =============================================================================
 #
 # Update the three dataset paths below before running.
 # Evaluation is disabled by default; add --eval_annotation_path if you have one.
-# =============================================================================
+#
+# Optional: export WANDB_API_KEY="your-wandb-api-key"
+# Optional: export CUDA_VISIBLE_DEVICES=0,1
 
-python sft_paddleocr_vl.py \
+NUM_PROCESSES="${NUM_PROCESSES:-2}"
+MAIN_PROCESS_PORT="${MAIN_PROCESS_PORT:-29500}"
+
+accelerate launch \
+    --num_processes "${NUM_PROCESSES}" \
+    --num_machines 1 \
+    --main_process_port "${MAIN_PROCESS_PORT}" \
+    sft_paddleocr_vl.py \
     --run_name "PaddleOCR-VL-mixed30k" \
+    --wandb_project "paddleocr-vl-sft" \
+    --wandb_tags "mixed30k,t4x2,bf16" \
     --model_path PaddlePaddle/PaddleOCR-VL \
     --dataset_backend mixed30k \
     --train_annotation_path ./mixed30k.json \
@@ -32,5 +44,6 @@ python sft_paddleocr_vl.py \
     --save_total_limit 3 \
     --dataloader_num_workers 2 \
     --gradient_checkpointing \
+    --ddp_find_unused_parameters false \
     --optim adamw_torch \
-    --report_to none
+    --report_to wandb
