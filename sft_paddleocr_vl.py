@@ -440,8 +440,8 @@ def _patch_rope_compat() -> None:
     print("Patched Transformers RoPE registry with a 'default' handler.")
 
 def _patch_causal_mask_compat() -> None:
-    """Directly rewrite the cached model file to accept inputs_embeds."""
-    import pathlib, re
+    """Remove inputs_embeds only from the create_causal_mask() call."""
+    import pathlib
 
     candidates = [
         pathlib.Path(
@@ -469,14 +469,30 @@ def _patch_causal_mask_compat() -> None:
         print("create_causal_mask patch not needed or already applied.")
         return
 
-    # Remove the entire line containing inputs_embeds=inputs_embeds
     lines = source.splitlines(keepends=True)
-    patched_lines = [
-        line for line in lines
-        if "inputs_embeds=inputs_embeds" not in line
-    ]
-    patched = "".join(patched_lines)
+    patched_lines = []
+    inside_causal_mask_call = False
 
+    for line in lines:
+        # Detect start of the create_causal_mask( call
+        if "create_causal_mask(" in line:
+            inside_causal_mask_call = True
+
+        # While inside that call, drop the inputs_embeds line
+        if inside_causal_mask_call and "inputs_embeds=inputs_embeds" in line:
+            print(f"  Removing line: {line.rstrip()}")
+            # Detect end of call block (closing paren)
+            if ")" in line:
+                inside_causal_mask_call = False
+            continue  # skip this line
+
+        # Detect end of call block
+        if inside_causal_mask_call and ")" in line:
+            inside_causal_mask_call = False
+
+        patched_lines.append(line)
+
+    patched = "".join(patched_lines)
     model_file.write_text(patched, encoding="utf-8")
     print(f"✓ Patched {model_file}")
 
