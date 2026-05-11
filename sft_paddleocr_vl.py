@@ -440,30 +440,46 @@ def _patch_rope_compat() -> None:
     print("Patched Transformers RoPE registry with a 'default' handler.")
 
 def _patch_causal_mask_compat() -> None:
-    """Strip inputs_embeds from create_causal_mask calls in cached model code."""
-    import importlib, types
+    """Directly rewrite the cached model file to accept inputs_embeds."""
+    import pathlib, re
 
-    model_module_path = (
-        "transformers_modules.PaddlePaddle.PaddleOCR_hyphen_VL"
-        ".fdd645c8b72f22ed25997db0d1dc80d09e51579b.modeling_paddleocr_vl"
+    candidates = [
+        pathlib.Path(
+            "/root/.cache/huggingface/modules/transformers_modules/"
+            "PaddlePaddle/PaddleOCR-VL/"
+            "fdd645c8b72f22ed25997db0d1dc80d09e51579b/"
+            "modeling_paddleocr_vl.py"
+        ),
+        pathlib.Path(
+            "/root/.cache/huggingface/modules/transformers_modules/"
+            "PaddlePaddle/PaddleOCR_hyphen_VL/"
+            "fdd645c8b72f22ed25997db0d1dc80d09e51579b/"
+            "modeling_paddleocr_vl.py"
+        ),
+    ]
+
+    model_file = next((p for p in candidates if p.exists()), None)
+    if model_file is None:
+        print("WARNING: Could not find modeling_paddleocr_vl.py — skipping patch.")
+        return
+
+    source = model_file.read_text(encoding="utf-8")
+
+    if "inputs_embeds=inputs_embeds" not in source:
+        print("create_causal_mask patch not needed or already applied.")
+        return
+
+    # Remove the inputs_embeds= kwarg from the create_causal_mask() call
+    patched = re.sub(
+        r",?\s*inputs_embeds\s*=\s*inputs_embeds\s*,?",
+        "",
+        source,
     )
-    try:
-        mod = importlib.import_module(model_module_path)
-    except ModuleNotFoundError:
-        print("Could not find PaddleOCR-VL module to patch; skipping.")
-        return
+    # Clean up any double commas left behind
+    patched = re.sub(r",\s*,", ",", patched)
 
-    original_fn = mod.create_causal_mask
-    import inspect
-    if "inputs_embeds" in inspect.signature(original_fn).parameters:
-        print("create_causal_mask already accepts inputs_embeds; no patch needed.")
-        return
-
-    def _patched_create_causal_mask(*args, inputs_embeds=None, **kwargs):
-        return original_fn(*args, **kwargs)
-
-    mod.create_causal_mask = _patched_create_causal_mask
-    print("Patched create_causal_mask() for inputs_embeds compatibility.")
+    model_file.write_text(patched, encoding="utf-8")
+    print(f"✓ Patched {model_file}")
 
 
 def train():
