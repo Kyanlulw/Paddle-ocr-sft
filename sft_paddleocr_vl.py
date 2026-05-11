@@ -469,14 +469,13 @@ def _patch_causal_mask_compat() -> None:
         print("create_causal_mask patch not needed or already applied.")
         return
 
-    # Remove the inputs_embeds= kwarg from the create_causal_mask() call
-    patched = re.sub(
-        r",?\s*inputs_embeds\s*=\s*inputs_embeds\s*,?",
-        "",
-        source,
-    )
-    # Clean up any double commas left behind
-    patched = re.sub(r",\s*,", ",", patched)
+    # Remove the entire line containing inputs_embeds=inputs_embeds
+    lines = source.splitlines(keepends=True)
+    patched_lines = [
+        line for line in lines
+        if "inputs_embeds=inputs_embeds" not in line
+    ]
+    patched = "".join(patched_lines)
 
     model_file.write_text(patched, encoding="utf-8")
     print(f"✓ Patched {model_file}")
