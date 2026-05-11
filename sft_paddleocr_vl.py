@@ -535,7 +535,6 @@ def train():
     print(f"Downloading model files from {model_args.model_path}...")
     snapshot_download(
         repo_id=model_args.model_path,
-        trust_remote_code=True,
         ignore_patterns=["*.msgpack", "*.h5", "flax_model*"],
     )
     _patch_causal_mask_compat()
